@@ -208,7 +208,7 @@ suite('backspace', function () {
     assert.equal(cursor.parent, textBlock, 'cursor is in text block');
     assert.equal(cursor[R], 0, 'cursor is at the end of text block');
     assert.equal(cursor[L].textStr, 'x', 'cursor is rightward of the x');
-    assert.equal(mq.latex(), '\\text{x}', 'the x has been deleted');
+    assert.equal(mq.latex(), '\\text{x}', 'the x has not been deleted');
 
     mq.keystroke('Backspace');
     assert.equal(cursor.parent, textBlock, 'cursor is still in text block');
@@ -217,6 +217,7 @@ suite('backspace', function () {
     assert.equal(mq.latex(), '', 'the x has been deleted');
 
     mq.keystroke('Backspace');
+    assert.equal(cursor.parent, rootBlock, 'cursor is in the root block');
     assert.equal(cursor[R], 0, 'cursor is at the right end of the root block');
     assert.equal(cursor[L], 0, 'cursor is at the left end of the root block');
     assert.equal(mq.latex(), '');
@@ -239,6 +240,267 @@ suite('backspace', function () {
       mq.latex('1+\\frac{}{}');
       mq.keystroke('Backspace');
       assert.equal(mq.latex(), '1+');
+    });
+  });
+});
+
+suite('delete', function () {
+  const $ = window.test_only_jquery;
+  var mq, rootBlock, controller, cursor;
+  setup(function () {
+    mq = MQ.MathField($('<span></span>').appendTo('#mock')[0]);
+    rootBlock = mq.__controller.root;
+    controller = mq.__controller;
+    cursor = controller.cursor;
+  });
+
+  function prayWellFormedPoint(pt) {
+    prayWellFormed(pt.parent, pt[L], pt[R]);
+  }
+  function assertLatex(latex) {
+    prayWellFormedPoint(mq.__controller.cursor);
+    assert.equal(mq.latex(), latex);
+  }
+
+  test('delete through exponent', function () {
+    controller.renderLatexMath('x^{nm}');
+    var exp = rootBlock.ends[R],
+      expBlock = exp.ends[L],
+      base = rootBlock.ends[L];
+    mq.moveToLeftEnd();
+    assert.equal(exp.latex(), '^{nm}', 'right end el is exponent');
+    assert.equal(base.latex(), 'x', 'left end el is base');
+    assert.equal(cursor.parent, rootBlock, 'cursor is in root block');
+    assert.equal(cursor[R], base, 'cursor is at the start of root block');
+
+    mq.keystroke('Del');
+    assert.equal(
+      cursor.parent,
+      rootBlock,
+      'cursor remains in root block on delete'
+    );
+    assertLatex('^{nm}');
+
+    mq.keystroke('Del');
+    assert.equal(cursor.parent, expBlock, 'cursor moves to exponent');
+    assertLatex('^{nm}');
+
+    mq.keystroke('Del');
+    assert.equal(cursor.parent, expBlock, 'cursor still in exponent');
+    assertLatex('^{m}');
+
+    mq.keystroke('Del');
+    assert.equal(cursor.parent, expBlock, 'still in exponent, but it is empty');
+    assertLatex('^{ }');
+
+    mq.keystroke('Del');
+    assert.equal(cursor.parent, rootBlock, 'delete tears down exponent');
+    assertLatex('');
+  });
+
+  test('delete through complex fraction', function () {
+    controller.renderLatexMath('\\frac{1}{\\frac{1}{2}+\\frac{2}{3}}+1');
+    mq.moveToLeftEnd();
+
+    //move to numerator
+    mq.keystroke('Del');
+    assertLatex('\\frac{1}{\\frac{1}{2}+\\frac{2}{3}}+1');
+
+    //delete the numerator
+    mq.keystroke('Del');
+    assertLatex('\\frac{ }{\\frac{1}{2}+\\frac{2}{3}}+1');
+
+    //destroy fraction
+    mq.keystroke('Del');
+    assertLatex('\\frac{1}{2}+\\frac{2}{3}+1');
+
+    mq.keystroke('Del');
+    mq.keystroke('Del');
+    mq.keystroke('Del');
+    assertLatex('2+\\frac{2}{3}+1');
+
+    mq.keystroke('Del');
+    mq.keystroke('Del');
+    assertLatex('\\frac{2}{3}+1');
+  });
+
+  test('delete through compound subscript', function () {
+    mq.latex('x_{2_2}');
+    mq.moveToLeftEnd();
+
+    mq.keystroke('Del');
+    assertLatex('_{2_{2}}');
+
+    mq.keystroke('Del');
+    mq.keystroke('Del');
+    assertLatex('_{_{2}}');
+
+    mq.keystroke('Del');
+    mq.keystroke('Del');
+    assertLatex('_{_{ }}');
+
+    mq.keystroke('Del');
+    assertLatex('_{ }');
+    mq.keystroke('Del');
+    assertLatex('');
+  });
+
+  test('delete through simple subscript', function () {
+    mq.latex('x_{2+3}');
+    mq.moveToLeftEnd();
+
+    //delete
+    mq.keystroke('Del');
+    assertLatex('_{2+3}');
+    mq.keystroke('Del');
+    assertLatex('_{2+3}');
+    mq.keystroke('Del');
+    assertLatex('_{+3}');
+    mq.keystroke('Del');
+    assertLatex('_{3}');
+    mq.keystroke('Del');
+    assertLatex('_{ }');
+    mq.keystroke('Del');
+    assertLatex('');
+  });
+
+  test('delete through subscript & superscript', function () {
+    mq.latex('x_2^{32}');
+    mq.moveToLeftEnd();
+
+    mq.keystroke('Del');
+    assertLatex('_{2}^{32}');
+
+    // move to subscript
+    mq.keystroke('Del');
+    assertLatex('_{2}^{32}');
+
+    //clear out subscript
+    mq.keystroke('Del');
+    assertLatex('_{ }^{32}');
+
+    //unpeel subscript
+    mq.keystroke('Del');
+    assertLatex('^{32}');
+
+    //into superscript
+    mq.keystroke('Del');
+    assertLatex('^{32}');
+
+    //clear out superscript
+    mq.keystroke('Del');
+    assertLatex('^{2}');
+    mq.keystroke('Del');
+    assertLatex('^{ }');
+
+    //unpeel exponent
+    mq.keystroke('Del');
+    assertLatex('');
+  });
+
+  test('delete through nthroot', function () {
+    mq.latex('\\sqrt[3]{x}');
+    mq.moveToLeftEnd();
+
+    //into the radix/degree/index
+    mq.keystroke('Del');
+    assertLatex('\\sqrt[3]{x}');
+
+    //remove the 3
+    mq.keystroke('Del');
+    assertLatex('\\sqrt[]{x}');
+
+    //destroys the cube root, but leave behind the x
+    mq.keystroke('Del');
+    assertLatex('x');
+
+    mq.keystroke('Del');
+    assertLatex('');
+  });
+
+  test('delete through nthroot from middle of radix', function () {
+    mq.latex('\\sqrt[3]{x}');
+    mq.moveToLeftEnd();
+
+    // into the radix/degree/index
+    mq.keystroke('Right');
+    mq.keystroke('Right');
+    assert.equal(cursor[L].latex(), '3', 'cursor at end of radix');
+
+    //destroys the cube root, but leave behind the 3 and x
+    mq.keystroke('Del');
+    assertLatex('3x');
+
+    //remove the x
+    mq.keystroke('Del');
+    assertLatex('3');
+  });
+
+  test('delete through large operator', function () {
+    mq.latex('\\sum_{n=1}^3x');
+    mq.moveToLeftEnd();
+
+    //move to subscript
+    mq.keystroke('Del');
+    assertLatex('\\sum_{n=1}^{3}x');
+    mq.keystroke('Del');
+    assertLatex('\\sum_{=1}^{3}x');
+    mq.keystroke('Del');
+    assertLatex('\\sum_{1}^{3}x');
+    mq.keystroke('Del');
+    assertLatex('\\sum_{ }^{3}x');
+
+    // destroy sum
+    mq.keystroke('Del');
+    assertLatex('3x');
+  });
+
+  test('delete through text block', function () {
+    mq.latex('\\text{x}');
+    mq.moveToLeftEnd();
+
+    mq.keystroke('Del');
+    var textBlock = rootBlock.ends[L];
+    assert.equal(cursor.parent, textBlock, 'cursor is in text block');
+    assert.equal(cursor[L], 0, 'cursor is at the start of text block');
+    assert.equal(cursor[R].textStr, 'x', 'cursor is leftward of the x');
+    assertLatex('\\text{x}', 'the x has not been deleted');
+
+    mq.keystroke('Del');
+    assert.equal(cursor.parent, textBlock, 'cursor is still in text block');
+    assert.equal(cursor[L], 0, 'cursor is at the left end of the text block');
+    assert.equal(cursor[R], 0, 'cursor is at the right end of the text block');
+    assertLatex('', 'the x has been deleted');
+
+    mq.keystroke('Del');
+    assert.equal(cursor.parent, rootBlock, 'cursor is in root block');
+    assert.equal(cursor[R], 0, 'cursor is at the right end of the root block');
+    assert.equal(cursor[L], 0, 'cursor is at the left end of the root block');
+    assertLatex('');
+  });
+
+  suite('empties', function () {
+    test('delete empty exponent', function () {
+      mq.latex('x^{}');
+      mq.moveToLeftEnd();
+      mq.keystroke('Del');
+      assertLatex('^{ }');
+      mq.keystroke('Del');
+      assertLatex('');
+    });
+
+    test('delete empty sqrt', function () {
+      mq.latex('\\sqrt{}+1');
+      mq.moveToLeftEnd();
+      mq.keystroke('Del');
+      assertLatex('+1');
+    });
+
+    test('delete empty fraction', function () {
+      mq.latex('\\frac{}{}+1');
+      mq.moveToLeftEnd();
+      mq.keystroke('Del');
+      assertLatex('+1');
     });
   });
 });

@@ -3,7 +3,7 @@ suite('autoSubscript', function () {
   var mq;
   setup(function () {
     mq = MQ.MathField($('<span></span>').appendTo('#mock')[0], {
-      autoSubscriptNumerals: true,
+      autoSubscriptNumerals: true
     });
     rootBlock = mq.__controller.root;
     controller = mq.__controller;
@@ -107,6 +107,21 @@ suite('autoSubscript', function () {
     assert.equal(mq.latex(), 'x^{ }');
 
     //unpeel exponent
+    mq.keystroke('Backspace');
+    assert.equal(mq.latex(), 'x');
+  });
+
+  test('backspace through compound subscript', function () {
+    mq.latex('x_{2_2}');
+
+    //first backspace goes into the subscript
+    mq.keystroke('Backspace');
+    assert.equal(mq.latex(), 'x_{2}');
+
+    //second one goes into the subscripts' subscript
+    mq.keystroke('Backspace');
+    assert.equal(mq.latex(), 'x_{ }');
+
     mq.keystroke('Backspace');
     assert.equal(mq.latex(), 'x');
   });

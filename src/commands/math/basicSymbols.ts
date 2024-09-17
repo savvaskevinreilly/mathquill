@@ -1,6 +1,10 @@
 /*********************************
  * Symbols for Basic Mathematics
  ********************************/
+
+const SPACE = '\\ ';
+const DOT = '.';
+
 class DigitGroupingChar extends MQSymbol {
   finalizeTree(opts: CursorOptions, dir: Direction) {
     this.sharedSiblingMethod(opts, dir);
@@ -21,15 +25,8 @@ class DigitGroupingChar extends MQSymbol {
 
   fixDigitGrouping(opts: CursorOptions) {
     if (!opts.enableDigitGrouping) return;
-
+    // `this` is a digit 0-9, or a SPACE, or a DOT
     var left: NodeRef = this;
-    var right: NodeRef = this;
-
-    var spacesFound = 0;
-    var dots = [];
-
-    var SPACE = '\\ ';
-    var DOT = '.';
 
     // traverse left as far as possible (starting at this char)
     var node: NodeRef = left;
@@ -38,35 +35,87 @@ class DigitGroupingChar extends MQSymbol {
         left = node;
       } else if (node.ctrlSeq === SPACE) {
         left = node;
-        spacesFound += 1;
       } else if (node.ctrlSeq === DOT) {
         left = node;
-        dots.push(node);
       } else {
         break;
       }
     } while ((node = left[L]));
 
+    // Traverse right from the left node.
+    // 'left' is the leftmost 0-9, SPACE, or DOT contiguous from this.
+    DigitGroupingChar.fixDigitGroupingFromLeft(opts, left);
+  }
+
+  /** Treat `left` as the start of a number. Scan right. */
+  static fixDigitGroupingFromLeft(opts: CursorOptions, left: NodeRef) {
+    // trim the leading spaces
+    while (left && left.ctrlSeq === SPACE) {
+      if (!left[R]) return;
+      left = left[R];
+    }
+
+    if (!(left instanceof DigitGroupingChar)) {
+      // Trimmed off all spaces, and left with non-digit, e.g. `\\ a`
+      return;
+    }
+
+    var node: NodeRef = left;
+    pray('node', node);
+    var right: NodeRef = left;
+    var spacesFound = 0;
+    var dotStreak = 0;
+    var dots: DigitGroupingChar[] = [];
     // traverse right as far as possible (starting to right of this char)
-    while ((node = right[R])) {
+    do {
+      // Invariant: "right" is a DigitGroupingChar
       if (/^[0-9]$/.test(node.ctrlSeq!)) {
         right = node;
+        dotStreak = 0;
       } else if (node.ctrlSeq === SPACE) {
         right = node;
         spacesFound += 1;
-      } else if (node.ctrlSeq === DOT) {
+        dotStreak = 0;
+      } else if (node.ctrlSeq === DOT && node instanceof DigitGroupingChar) {
         right = node;
         dots.push(node);
+        if (opts.tripleDotsAreEllipsis) {
+          dotStreak += 1;
+        }
       } else {
         break;
       }
-    }
+      if (dotStreak == 3) {
+        break;
+      }
+    } while ((node = right[R]));
 
-    // trim the leading spaces
-    while (right !== left && left && left.ctrlSeq === SPACE) {
-      left = left[R];
-      spacesFound -= 1;
+    // Exited the loop for one of two reasons:
+    // 1. `dotStreak == 3`. In this case, trim off the three trailing dots,
+    // and continue again from the character after the ellipsis.
+    if (dotStreak === 3) {
+      const rightDot = dots.pop()!;
+      const middleDot = dots.pop()!;
+      const leftDot = dots.pop()!;
+      if (rightDot[R] instanceof DigitGroupingChar) {
+        DigitGroupingChar.fixDigitGroupingFromLeft(opts, rightDot[R]);
+      }
+      rightDot.setGroupingClass('mq-ellipsis-end');
+      middleDot.setGroupingClass('mq-ellipsis-middle');
+      leftDot.setGroupingClass('mq-ellipsis-start');
+      right = leftDot[L];
+      if (left === leftDot) {
+        // e.g. `[-...5]` afer typing the `-`.
+        // `left` is the left `.`, and `right` is the `-`.
+        return;
+      }
+      // Else, fallthrough. `left` through `right` (inclusive) is a sequence of
+      // `DigitGroupingChar`s containing no three consecutive dots.
     }
+    // 2. `!right[R]` or `right[R]` is not a digit grouping char.
+    // In this case, `right` is the rightmost digit of the number.
+    // Case 1 (`dotStreak == 3`) falls to this: after `right = right[L][L][L]`,
+    // then `right` is the rightmost digit before the ellipsis.
 
     // trim the trailing spaces
     while (right !== left && right && right.ctrlSeq === SPACE) {
@@ -79,21 +128,22 @@ class DigitGroupingChar extends MQSymbol {
 
     var disableFormatting = spacesFound > 0 || dots.length > 1;
     if (disableFormatting) {
-      this.removeGroupingBetween(left, right);
+      DigitGroupingChar.removeGroupingBetween(left, right);
     } else if (dots[0]) {
       if (dots[0] !== left) {
-        this.addGroupingBetween(dots[0][L], left);
+        DigitGroupingChar.addGroupingBetween(dots[0][L], left);
       }
       if (dots[0] !== right) {
         // we do not show grouping to the right of a decimal place #yet
-        this.removeGroupingBetween(dots[0][R], right);
+        // Remove the grouping for the decimal itself and the digits to the right.
+        DigitGroupingChar.removeGroupingBetween(dots[0], right);
       }
     } else {
-      this.addGroupingBetween(right, left);
+      DigitGroupingChar.addGroupingBetween(right, left);
     }
   }
 
-  removeGroupingBetween(left: NodeRef, right: NodeRef) {
+  static removeGroupingBetween(left: NodeRef, right: NodeRef) {
     var node = left;
     do {
       if (node instanceof DigitGroupingChar) {
@@ -103,14 +153,15 @@ class DigitGroupingChar extends MQSymbol {
     } while ((node = node[R]));
   }
 
-  addGroupingBetween(start: NodeRef, end: NodeRef) {
+  // Works right-to-left, so `start` is the rightmost, and `end` is the leftmost.
+  // Assumes all nodes from `end` to `start` are `DigitGroupingChar`s.
+  static addGroupingBetween(start: NodeRef, end: NodeRef) {
     var node = start;
     var count = 0;
-
     var totalDigits = 0;
-    var node = start;
     while (node) {
       totalDigits += 1;
+      pray('digit', node instanceof DigitGroupingChar);
 
       if (node === end) break;
       node = node[L];
@@ -279,7 +330,7 @@ function bindVariable(
 }
 
 Options.prototype.autoCommands = {
-  _maxLength: 0,
+  _maxLength: 0
 };
 baseOptionProcessors.autoCommands = function (cmds: string | undefined) {
   if (typeof cmds !== 'string' || !/^[a-z]+(?: [a-z]+)*$/i.test(cmds)) {
@@ -336,8 +387,34 @@ baseOptionProcessors.autoParenthesizedFunctions = function (cmds) {
   return dict;
 };
 
+function letterSequenceEndingAtNode(node: NodeRef, maxLength: number) {
+  let str = '';
+  let i = 0;
+  // Inelegant approach to avoid counting operatorname letters as letters here:
+  // node.ctrlSeq === node.letter holds true unless node is:
+  //  - first or last letter in an operator name like \operatorname{arcsinh}, or
+  //    (`\operatorname{` is prepended to first, and `}` is appended to last)
+  //  - first or last letter in a builtin like `\sin `
+  //    (`\` is prepended to first, and ` ` (space) is appended to last)
+  while (
+    node instanceof Letter &&
+    node.ctrlSeq === node.letter &&
+    i < maxLength
+  ) {
+    str = node.letter + str;
+    node = node[L];
+    i += 1;
+  }
+  return str;
+}
+
 class Letter extends Variable {
   letter: string;
+  /** If this is the last letter of an operatorname (`\operatorname{arcsinh}`)
+   * or builtin (`\sin`), give its category, based on infixOperatorNames
+   * and prefixOperatorNames. E.g. "for" may be infix and "sin" may be prefix.
+   */
+  endsCategory?: undefined | 'infix' | 'prefix';
 
   constructor(ch: string) {
     super(ch);
@@ -355,20 +432,12 @@ class Letter extends Variable {
     if (maxLength > 0) {
       // want longest possible autocommand, so join together longest
       // sequence of letters
-      var str = '';
-      var l: NodeRef = this;
-      var i = 0;
-      // FIXME: l.ctrlSeq === l.letter checks if first or last in an operator name
-      while (l instanceof Letter && l.ctrlSeq === l.letter && i < maxLength) {
-        str = l.letter + str;
-        l = l[L];
-        i += 1;
-      }
+      let str = letterSequenceEndingAtNode(this, maxLength) ?? '';
       // check for an autocommand, going thru substrings longest to shortest
       while (str.length) {
         if (autoCmds.hasOwnProperty(str)) {
-          l = this;
-          for (i = 1; l && i < str.length; i += 1, l = l[L]);
+          let l: NodeRef = this;
+          for (let i = 1; l && i < str.length; i += 1, l = l[L]);
 
           new Fragment(l, this).remove();
           cursor[L] = (l as MQNode)[L];
@@ -433,6 +502,7 @@ class Letter extends Variable {
   italicize(bool: boolean) {
     this.isItalic = bool;
     this.isPartOfOperator = !bool;
+    if (bool) delete this.endsCategory;
     this.domFrag().toggleClass('mq-operator-name', !bool);
     return this;
   }
@@ -496,7 +566,7 @@ class Letter extends Variable {
     ) {
       for (var len = min(autoOpsLength, str.length - i); len > 0; len -= 1) {
         var word = str.slice(i, i + len);
-        var last: MQNode = undefined!; // TODO - TS complaining that we use last before assigning to it
+        var last: Letter = undefined!; // TODO - TS complaining that we use last before assigning to it
 
         if (autoOps.hasOwnProperty(word)) {
           for (
@@ -514,6 +584,11 @@ class Letter extends Variable {
           first.ctrlSeq =
             (isBuiltIn ? '\\' : '\\operatorname{') + first.ctrlSeq;
           last.ctrlSeq += isBuiltIn ? ' ' : '}';
+          if (opts.infixOperatorNames[word]) {
+            last.endsCategory = 'infix';
+          } else if (opts.prefixOperatorNames[word]) {
+            last.endsCategory = 'prefix';
+          }
 
           if (TwoWordOpNames.hasOwnProperty(word)) {
             const lastL = last[L];
@@ -564,7 +639,7 @@ class Letter extends Variable {
 
     // do not add padding between letter and binary operator. The
     // binary operator already has padding
-    if (node instanceof BinaryOperator) return true;
+    if (node instanceof BinaryOperator && node.isBinaryOperator()) return true;
 
     if (node instanceof SummationNotation) return true;
 
@@ -585,7 +660,7 @@ var TwoWordOpNames = { limsup: 1, liminf: 1, projlim: 1, injlim: 1 };
 
 function defaultAutoOpNames() {
   const AutoOpNames: AutoDict = {
-    _maxLength: 9,
+    _maxLength: 9
   };
   var mostOps = (
     'arg deg det dim exp gcd hom inf ker lg lim ln log max min sup' +
@@ -658,6 +733,32 @@ baseOptionProcessors.autoOperatorNames = function (cmds) {
   dict._maxLength = maxLength;
   return dict;
 };
+
+Options.prototype.infixOperatorNames = {};
+baseOptionProcessors.infixOperatorNames = splitWordsIntoDict;
+
+Options.prototype.prefixOperatorNames = {};
+baseOptionProcessors.prefixOperatorNames = splitWordsIntoDict;
+
+function splitWordsIntoDict(cmds: unknown) {
+  if (typeof cmds !== 'string') {
+    throw '"' + cmds + '" not a space-delimited list';
+  }
+  if (!/^[a-z]+(?: [a-z]+)*$/i.test(cmds)) {
+    throw '"' + cmds + '" not a space-delimited list of letters';
+  }
+  var list = cmds.split(' ');
+  var dict: { [word in string]?: true } = {};
+  for (var i = 0; i < list.length; i += 1) {
+    var cmd = list[i];
+    if (cmd.length < 2) {
+      throw '"' + cmd + '" not minimum length of 2';
+    }
+    dict[cmd] = true;
+  }
+  return dict;
+}
+
 class OperatorName extends MQSymbol {
   ctrlSeq: string;
   constructor(fn?: string) {
@@ -756,7 +857,11 @@ if (!CharCmds['\\']) CharCmds['\\'] = LatexCmds.backslash;
 
 LatexCmds.$ = bindVanillaSymbol('\\$', '$', 'dollar');
 
-LatexCmds.square = bindVanillaSymbol('\\square ', '\u25A1', 'square');
+LatexCmds['□'] = LatexCmds.square = bindVanillaSymbol(
+  '\\square ',
+  '\u25A1',
+  'square'
+);
 LatexCmds.mid = bindVanillaSymbol('\\mid ', '\u2223', 'mid');
 
 // does not use Symbola font
@@ -810,84 +915,113 @@ LatexCmds['⟂'] = LatexCmds.perp = bindVanillaSymbol(
 //the following are all Greek to me, but this helped a lot: http://www.ams.org/STIX/ion/stixsig03.html
 
 //lowercase Greek letter variables
-LatexCmds.alpha =
-  LatexCmds.beta =
-  LatexCmds.gamma =
-  LatexCmds.delta =
-  LatexCmds.zeta =
-  LatexCmds.eta =
-  LatexCmds.theta =
-  LatexCmds.iota =
-  LatexCmds.kappa =
-  LatexCmds.mu =
-  LatexCmds.nu =
-  LatexCmds.xi =
-  LatexCmds.rho =
-  LatexCmds.sigma =
-  LatexCmds.tau =
-  LatexCmds.chi =
-  LatexCmds.psi =
-  LatexCmds.omega =
-    (latex) =>
-      new Variable('\\' + latex + ' ', h.entityText('&' + latex + ';'));
+
+function bindLowercaseGreek(latex: string) {
+  return bindVariable('\\' + latex + ' ', '&' + latex + ';', latex);
+}
+
+LatexCmds['α'] = LatexCmds.alpha = bindLowercaseGreek('alpha');
+LatexCmds['β'] = LatexCmds.beta = bindLowercaseGreek('beta');
+LatexCmds['γ'] = LatexCmds.gamma = bindLowercaseGreek('gamma');
+LatexCmds['δ'] = LatexCmds.delta = bindLowercaseGreek('delta');
+LatexCmds['ζ'] = LatexCmds.zeta = bindLowercaseGreek('zeta');
+LatexCmds['η'] = LatexCmds.eta = bindLowercaseGreek('eta');
+LatexCmds['θ'] = LatexCmds.theta = bindLowercaseGreek('theta');
+LatexCmds['ι'] = LatexCmds.iota = bindLowercaseGreek('iota');
+LatexCmds['κ'] = LatexCmds.kappa = bindLowercaseGreek('kappa');
+LatexCmds['μ'] = LatexCmds.mu = bindLowercaseGreek('mu');
+LatexCmds['ν'] = LatexCmds.nu = bindLowercaseGreek('nu');
+LatexCmds['ξ'] = LatexCmds.xi = bindLowercaseGreek('xi');
+LatexCmds['ρ'] = LatexCmds.rho = bindLowercaseGreek('rho');
+LatexCmds['σ'] = LatexCmds.sigma = bindLowercaseGreek('sigma');
+LatexCmds['τ'] = LatexCmds.tau = bindLowercaseGreek('tau');
+LatexCmds['χ'] = LatexCmds.chi = bindLowercaseGreek('chi');
+LatexCmds['ψ'] = LatexCmds.psi = bindLowercaseGreek('psi');
+LatexCmds['ω'] = LatexCmds.omega = bindLowercaseGreek('omega');
 
 //why can't anybody FUCKING agree on these
-LatexCmds.phi = bindVariable('\\phi ', '&#981;', 'phi'); //W3C or Unicode?
+LatexCmds['ϕ'] = LatexCmds.phi = bindVariable('\\phi ', '&#981;', 'phi'); //W3C or Unicode?
 
-LatexCmds.phiv = LatexCmds.varphi = bindVariable('\\varphi ', '&phi;', 'phi'); //Elsevier and 9573-13 //AMS and LaTeX
+LatexCmds['φ'] =
+  LatexCmds.phiv =
+  LatexCmds.varphi =
+    bindVariable('\\varphi ', '&phi;', 'phi'); //Elsevier and 9573-13 //AMS and LaTeX
 
-LatexCmds.epsilon = bindVariable('\\epsilon ', '&#1013;', 'epsilon'); //W3C or Unicode?
-
-LatexCmds.epsiv = LatexCmds.varepsilon = bindVariable(
-  //Elsevier and 9573-13 //AMS and LaTeX
-  '\\varepsilon ',
-  '&epsilon;',
+LatexCmds['ϵ'] = LatexCmds.epsilon = bindVariable(
+  '\\epsilon ',
+  '&#1013;',
   'epsilon'
-);
+); //W3C or Unicode?
 
-LatexCmds.piv = LatexCmds.varpi = bindVariable('\\varpi ', '&piv;', 'piv'); //W3C/Unicode and Elsevier and 9573-13 //AMS and LaTeX
+LatexCmds['ε'] =
+  LatexCmds.epsiv =
+  LatexCmds.varepsilon =
+    bindVariable(
+      //Elsevier and 9573-13 //AMS and LaTeX
+      '\\varepsilon ',
+      '&epsilon;',
+      'epsilon'
+    );
 
-LatexCmds.sigmaf = //W3C/Unicode
+LatexCmds['ϖ'] =
+  LatexCmds.piv =
+  LatexCmds.varpi =
+    bindVariable('\\varpi ', '&piv;', 'piv'); //W3C/Unicode and Elsevier and 9573-13 //AMS and LaTeX
+
+LatexCmds['ς'] = // Unicode
+  LatexCmds.sigmaf = //W3C/Unicode
   LatexCmds.sigmav = //Elsevier
   LatexCmds.varsigma = //LaTeX
     bindVariable('\\varsigma ', '&sigmaf;', 'sigma');
 
-LatexCmds.thetav = //Elsevier and 9573-13
+LatexCmds['ϑ'] = // Unicode
+  LatexCmds.thetav = //Elsevier and 9573-13
   LatexCmds.vartheta = //AMS and LaTeX
   LatexCmds.thetasym = //W3C/Unicode
     bindVariable('\\vartheta ', '&thetasym;', 'theta');
 
-LatexCmds.upsilon = LatexCmds.upsi = bindVariable(
-  //AMS and LaTeX and W3C/Unicode //Elsevier and 9573-13
-  '\\upsilon ',
-  '&upsilon;',
-  'upsilon'
-);
+LatexCmds['υ'] =
+  LatexCmds.upsilon =
+  LatexCmds.upsi =
+    bindVariable(
+      //AMS and LaTeX and W3C/Unicode //Elsevier and 9573-13
+      '\\upsilon ',
+      '&upsilon;',
+      'upsilon'
+    );
 
 //these aren't even mentioned in the HTML character entity references
-LatexCmds.gammad = //Elsevier
+LatexCmds['Ϝ'] =
+  LatexCmds.gammad = //Elsevier
   LatexCmds.Gammad = //9573-13 -- WTF, right? I dunno if this was a typo in the reference (see above)
   LatexCmds.digamma = //LaTeX
     bindVariable('\\digamma ', '&#989;', 'gamma');
 
-LatexCmds.kappav = LatexCmds.varkappa = bindVariable(
-  //Elsevier //AMS and LaTeX
-  '\\varkappa ',
-  '&#1008;',
-  'kappa'
-);
+LatexCmds['ϰ'] =
+  LatexCmds.kappav =
+  LatexCmds.varkappa =
+    bindVariable(
+      //Elsevier //AMS and LaTeX
+      '\\varkappa ',
+      '&#1008;',
+      'kappa'
+    );
 
-LatexCmds.rhov = LatexCmds.varrho = bindVariable('\\varrho ', '&#1009;', 'rho'); //Elsevier and 9573-13 //AMS and LaTeX
+LatexCmds['ϱ'] =
+  LatexCmds.rhov =
+  LatexCmds.varrho =
+    bindVariable('\\varrho ', '&#1009;', 'rho'); //Elsevier and 9573-13 //AMS and LaTeX
 
 //Greek constants, look best in non-italicized Times New Roman
 LatexCmds.pi = LatexCmds['π'] = () =>
   new NonSymbolaSymbol('\\pi ', h.entityText('&pi;'), 'pi');
-LatexCmds.lambda = () =>
+LatexCmds['λ'] = LatexCmds.lambda = () =>
   new NonSymbolaSymbol('\\lambda ', h.entityText('&lambda;'), 'lambda');
 
 //uppercase greek letters
 
-LatexCmds.Upsilon = //LaTeX
+LatexCmds['Υ'] =
+  LatexCmds.Upsilon = //LaTeX
   LatexCmds.Upsi = //Elsevier and 9573-13
   LatexCmds.upsih = //W3C/Unicode "upsilon with hook"
   LatexCmds.Upsih = //'cos it makes sense to me
@@ -899,19 +1033,24 @@ LatexCmds.Upsilon = //LaTeX
       ); //Symbola's 'upsilon with a hook' is a capital Y without hooks :(
 
 //other symbols with the same LaTeX command and HTML character entity reference
-LatexCmds.Gamma =
-  LatexCmds.Delta =
-  LatexCmds.Theta =
-  LatexCmds.Lambda =
-  LatexCmds.Xi =
-  LatexCmds.Pi =
-  LatexCmds.Sigma =
-  LatexCmds.Phi =
-  LatexCmds.Psi =
-  LatexCmds.Omega =
-  LatexCmds.forall =
-    (latex) =>
-      new VanillaSymbol('\\' + latex + ' ', h.entityText('&' + latex + ';'));
+
+function bindUppercaseGreek(latex: string) {
+  return () =>
+    new VanillaSymbol('\\' + latex + ' ', h.entityText('&' + latex + ';'));
+}
+
+LatexCmds['Γ'] = LatexCmds.Gamma = bindUppercaseGreek('Gamma');
+LatexCmds['Δ'] = LatexCmds.Delta = bindUppercaseGreek('Delta');
+LatexCmds['Θ'] = LatexCmds.Theta = bindUppercaseGreek('Theta');
+LatexCmds['Λ'] = LatexCmds.Lambda = bindUppercaseGreek('Lambda');
+LatexCmds['Ξ'] = LatexCmds.Xi = bindUppercaseGreek('Xi');
+LatexCmds['Π'] = LatexCmds.Pi = bindUppercaseGreek('Pi');
+LatexCmds['Σ'] = LatexCmds.Sigma = bindUppercaseGreek('Sigma');
+LatexCmds['Φ'] = LatexCmds.Phi = bindUppercaseGreek('Phi');
+LatexCmds['Ψ'] = LatexCmds.Psi = bindUppercaseGreek('Psi');
+LatexCmds['Ω'] = LatexCmds.Omega = bindUppercaseGreek('Omega');
+LatexCmds['∀'] = LatexCmds.forall = bindUppercaseGreek('forall');
+// "exists" is in advancedSymbols
 
 // symbols that aren't a single MathCommand, but are instead a whole
 // Fragment. Creates the Fragment from a LaTeX string
@@ -1014,20 +1153,34 @@ LatexCmds['¾'] = () => new LatexFragment('\\frac34');
 // around handling valid latex as latex rather than treating it as keystrokes.
 LatexCmds['√'] = () => new LatexFragment('\\sqrt{}');
 
+/**
+ * Return true if:
+ * - node is BinaryOperator (+, ×, -, etc), including PlusMinus which could
+ *   siometimes be interpreted as unary, or
+ * - node ends an infix word like "for" specified in `infixOperatorNames`
+ */
+function nodeEndsBinaryOperator(node: NodeRef): boolean {
+  return (
+    node instanceof BinaryOperator ||
+    (node instanceof Letter && node.endsCategory == 'infix')
+  );
+}
+
 // Binary operator determination is used in several contexts for PlusMinus nodes and their descendants.
 // For instance, we set the item's class name based on this factor, and also assign different mathspeak values (plus vs positive, negative vs minus).
-function isBinaryOperator(node: NodeRef): boolean {
+function plusMinusIsBinaryOperator(node: NodeRef): boolean {
   if (!node) return false;
 
   const nodeL = node[L];
 
   if (nodeL) {
-    // If the left sibling is a binary operator or a separator (comma, semicolon, colon, space)
-    // or an open bracket (open parenthesis, open square bracket)
+    // If the left sibling is a binary operator or a separator (comma, semicolon, colon, space),
     // consider the operator to be unary
     if (
-      nodeL instanceof BinaryOperator ||
-      /^(\\ )|[,;:\(\[]$/.test(nodeL.ctrlSeq!)
+      nodeEndsBinaryOperator(nodeL) ||
+      (nodeL instanceof Letter && nodeL.endsCategory == 'prefix') ||
+      (!(nodeL instanceof Bracket) && // exclude Bracket because ctrlSeq gives "(" even if `node` is after the ")"
+        /^(\\ )|[,;:\(\[]$/.test(nodeL.ctrlSeq!))
     ) {
       return false;
     }
@@ -1039,8 +1192,11 @@ function isBinaryOperator(node: NodeRef): boolean {
     //if we are in a style block at the leftmost edge, determine unary/binary based on
     //the style block
     //this allows style blocks to be transparent for unary/binary purposes
-    return isBinaryOperator(node.parent.parent);
+    return plusMinusIsBinaryOperator(node.parent.parent);
   } else {
+    // This is reached when `node` is the first element in the MathBlock, for
+    // example `node` is after an open bracket. E.g. `node` is "-" inside "(-5)".
+    // Then `nodeL` is undefined since `node` is the start of the block.
     return false;
   }
 
@@ -1050,6 +1206,10 @@ function isBinaryOperator(node: NodeRef): boolean {
 var PlusMinus = class extends BinaryOperator {
   constructor(ch?: string, html?: ChildNode, mathspeak?: string) {
     super(ch, html, undefined, mathspeak, true);
+  }
+
+  isBinaryOperator(): boolean {
+    return plusMinusIsBinaryOperator(this);
   }
 
   contactWeld(cursor: Cursor, dir?: Direction) {
@@ -1064,7 +1224,7 @@ var PlusMinus = class extends BinaryOperator {
 
   sharedSiblingMethod(_opts?: CursorOptions, dir?: Direction) {
     if (dir === R) return; // ignore if sibling only changed on the right
-    this.domFrag().oneElement().className = isBinaryOperator(this)
+    this.domFrag().oneElement().className = plusMinusIsBinaryOperator(this)
       ? 'mq-binary-operator'
       : '';
 
@@ -1077,7 +1237,7 @@ LatexCmds['+'] = class extends PlusMinus {
     super('+', h.text('+'));
   }
   mathspeak(): string {
-    return isBinaryOperator(this) ? 'plus' : 'positive';
+    return plusMinusIsBinaryOperator(this) ? 'plus' : 'positive';
   }
 };
 
@@ -1087,7 +1247,7 @@ class MinusNode extends PlusMinus {
     super('-', h.entityText('&minus;'));
   }
   mathspeak(): string {
-    return isBinaryOperator(this) ? 'minus' : 'negative';
+    return plusMinusIsBinaryOperator(this) ? 'minus' : 'negative';
   }
 }
 LatexCmds['−'] = LatexCmds['—'] = LatexCmds['–'] = LatexCmds['-'] = MinusNode;
@@ -1177,7 +1337,7 @@ var less: InequalityData = {
   ctrlSeqStrict: '<',
   htmlEntityStrict: '&lt;',
   textStrict: '<',
-  mathspeakStrict: 'less than',
+  mathspeakStrict: 'less than'
 };
 var greater: InequalityData = {
   ctrlSeq: '\\ge ',
@@ -1187,7 +1347,7 @@ var greater: InequalityData = {
   ctrlSeqStrict: '>',
   htmlEntityStrict: '&gt;',
   textStrict: '>',
-  mathspeakStrict: 'greater than',
+  mathspeakStrict: 'greater than'
 };
 
 class Greater extends Inequality {
@@ -1221,7 +1381,8 @@ LatexCmds['≥'] =
   LatexCmds.ge =
   LatexCmds.geq =
     () => new Inequality(greater, false);
-LatexCmds.infty =
+LatexCmds['∞'] =
+  LatexCmds.infty =
   LatexCmds.infin =
   LatexCmds.infinity =
     bindVanillaSymbol('\\infty ', '&infin;', 'infinity');
@@ -1249,12 +1410,10 @@ class Equality extends BinaryOperator {
 }
 LatexCmds['='] = Equality;
 
-LatexCmds['×'] = LatexCmds.times = bindBinaryOperator(
-  '\\times ',
-  '&times;',
-  '[x]',
-  'times'
-);
+LatexCmds['×'] =
+  LatexCmds.times =
+  LatexCmds.cross =
+    bindBinaryOperator('\\times ', '&times;', '[x]', 'times');
 
 LatexCmds['÷'] =
   LatexCmds.div =
@@ -1320,3 +1479,62 @@ baseOptionProcessors.interpretTildeAsSim = function (val: boolean | undefined) {
   }
   return interpretAsSim;
 };
+
+LatexCmds['◯'] = LatexCmds.bigcirc = bindVanillaSymbol(
+  '\\bigcirc ',
+  '&#9711;',
+  'circle'
+);
+
+LatexCmds['∠'] =
+  LatexCmds.ang =
+  LatexCmds.angle =
+    bindVanillaSymbol('\\angle ', '&ang;', 'angle');
+
+// Using degree instead of ^\circ for compatibility
+// with a pasted in unicode degree symbol
+LatexCmds['°'] = LatexCmds.degree = bindVanillaSymbol(
+  '\\degree ',
+  '&deg;',
+  'degrees'
+);
+
+LatexCmds['△'] = LatexCmds.triangle = bindVanillaSymbol(
+  '\\triangle ',
+  '&#9651;',
+  'triangle'
+);
+
+LatexCmds['≅'] = LatexCmds.cong = bindBinaryOperator(
+  '\\cong ',
+  '&cong;',
+  'cong',
+  'congruent'
+);
+
+LatexCmds['∡'] = LatexCmds.measuredangle = bindVanillaSymbol(
+  '\\measuredangle ',
+  '&#8737;',
+  'measured angle'
+);
+
+//not real LaTex command see https://github.com/mathquill/mathquill/pull/552 for more details
+LatexCmds['▱'] = LatexCmds.parallelogram = bindVanillaSymbol(
+  '\\parallelogram ',
+  '&#9649;',
+  'parallelogram'
+);
+
+LatexCmds['≇'] = LatexCmds.ncong = bindBinaryOperator(
+  '\\ncong ',
+  '&ncong;',
+  'ncong',
+  'not congruent'
+);
+
+LatexCmds['≁'] = LatexCmds.nsim = bindBinaryOperator(
+  '\\nsim ',
+  '&nsim;',
+  'nsim',
+  'not similar'
+);

@@ -1,6 +1,7 @@
 # Setting Configuration
 
 The configuration options object is of the following form:
+
 ```js
 {
   spaceBehavesLikeTab: true,
@@ -13,8 +14,10 @@ The configuration options object is of the following form:
   autoCommands: 'pi theta sqrt sum',
   autoOperatorNames: 'sin cos',
   maxDepth: 10,
-  substituteTextarea: function() {
-    return document.createElement('textarea');
+  substituteTextarea: function(tabbable) {
+    const textarea = document.createElement('textarea');
+    textarea.setAttribute('tabindex', tabbable ? '0' : '-1');
+    return textarea;
   },
   handlers: {
     edit: function(mathField) { ... },
@@ -27,8 +30,6 @@ The configuration options object is of the following form:
 You can configure an editable math field by passing an options argument as the second argument to [the constructor (`MQ.MathField(html_element, config)`)](Api_Methods.md#mqmathfieldhtml_element-config), or by [calling `.config()` on the math field (`mathField.config(new_config)`)](Api_Methods.md#confignew_config).
 
 Defaults may be set with [`MQ.config(global_config)`](Api_Methods.md#mqconfigconfig).
-
-
 
 # Configuration Options
 
@@ -48,7 +49,7 @@ If instead you want right to always visually go right, and left to always go vis
 
 ## restrictMismatchedBrackets
 
-If `restrictMismatchedBrackets` is true then you can type `[a,b)` and `(a,b]`, but if you try typing `[x}` or `\langle x|`, you'll get `[{x}]` or `\langle|x|\rangle` instead. This lets you type `(|x|+1)` normally; otherwise, you'd get `\left( \right| x \left| + 1 \right)`.
+If `restrictMismatchedBrackets` is true then you can type `[a,b)` and `(a,b]`, but if you try typing `[x}` or `\langle x|`, you'll get `[{x}]` or `\langle|x|\rangle` instead. This lets you type `(|x|+1)` normally; otherwise, you'd get `\left( \right| x \left| + 1 \right)`. Setting the option to `'none'` disables the range matching, so ( won't match with ] and vice versa.
 
 ## sumStartsWithNEquals
 
@@ -82,6 +83,34 @@ This defaults to the LaTeX built-in operator names ([Section 3.17 of the Short M
 
 Just like [`autoCommands`](#autocommands) above, this takes a string formatted as a space-delimited list of LaTeX commands.
 
+## infixOperatorNames
+
+`infixOperatorNames` specifies a set of operator names that should be treated as infix operators, for example for determining when to stop scanning left before a fraction.
+
+For example, [Desmos](https://www.desmos.com/calculator) includes `for` in this option, so typing `(t,t) for 1/2 < t < 1` becomes `(t,t) for \frac{1}{2} < t < 1` and not `\frac{(t,t) for 1}{2} < t < 1`.
+
+Also, a minus sign (`-`) after an infix operator is treated as prefix, so `(t,t) for -1 < t < 1` doesn't look like `(t,t) for - 1 < t < 1`.
+
+This defaults to being empty.
+
+Just like [`autoCommands`](#autocommands) above, this takes a string formatted as a space-delimited list of LaTeX commands.
+
+## prefixOperatorNames
+
+`prefixOperatorNames` specifies a set of operator names that appear as prefix operators. A minus sign after a prefix operator is treated as a negative, instead of a binary subtraction.
+
+For example, Desmos includes `sin` in this option, so typing `sin -1` doesn't look like `sin - 1`.
+
+## enableDigitGrouping and tripleDotsAreEllipsis
+
+If `enableDigitGrouping` is true, then sequences of digits (and `.`) will have a thin space every three digits. If a sequence of digits has exactly one `.`, then the spacing will only be in the whole number part (before the `.`). If a sequence of digits contains more than one `.`, or at least one space, then digit grouping is always disabled for that sequence.
+
+If `tripleDotsAreEllipsis` is true, then `...` is treated as an ellipsis, with the following three changes:
+
+1. Digit grouping re-starts after `...`, so `12345...56789` puts a thin space in both `12345` and `56789`
+2. A thin space surrounds `...`, so `123....456` looks more like `123 ... .456`.
+3. The `...` is not included in automatic fractions, so typing `12...34/` leads to `12...\frac{34}{ }` instead of `\frac{12...34}{ }`.
+
 ## maxDepth
 
 `maxDepth` specifies the maximum number of nested MathBlocks. When `maxDepth` is set to 1, the user can type simple math symbols directly into the editor but not into nested MathBlocks, e.g. the numerator and denominator of a fraction.
@@ -90,13 +119,22 @@ Nested content in latex rendered during initialization or pasted into mathquill 
 You can also specify a speech-friendly representation of the operator name by supplying the operator name, a `|` and its speech alternative (separate multiple words with a `-`). For example, `'sin|sine cos|cosine tan|tangent sinh|hyperbolic-sine'`.
 
 ## substituteTextarea
-`substituteTextarea` is a function that creates a focusable DOM element that is called when setting up a math field. Overwriting this may be useful for hacks like suppressing built-in virtual keyboards. It defaults to `<textarea autocorrect=off .../>`.
-For example, [Desmos](https://www.desmos.com/calculator) substitutes `<span tabindex=0></span>` on iOS to suppress the built-in virtual keyboard in favor of a custom math keypad that calls the MathQuill API. Unfortunately there's no universal [check for a virtual keyboard](http://stackoverflow.com/q/2593139/362030) or [way to detect a touchscreen](http://www.stucox.com/blog/you-cant-detect-a-touchscreen/), and even if you could, a touchscreen ≠ virtual keyboard (Windows 8 and ChromeOS devices have both physical keyboards and touchscreens and iOS and Android devices can have Bluetooth keyboards). Desmos currently sniffs the user agent for iOS, so Bluetooth keyboards just don't work in Desmos on iOS. The tradeoffs are up to you.
 
+`substituteTextarea` is a function that creates a focusable DOM element that is called when setting up a math field. Overwriting this may be useful for hacks like suppressing built-in virtual keyboards. It defaults to `<textarea autocorrect=off .../>`.
+For example, [Desmos](https://www.desmos.com/calculator) substitutes `<textarea inputmode=none />` to suppress the native virtual keyboard in favor of a custom math keypad that calls the MathQuill API. On old iOS versions that don't support `inputmode=none`, it uses `<span tabindex=0></span>` to suppress the native virtual keyboard, at the cost of bluetooth keyboards not working.
+
+The `substituteTextarea` takes one argument, a boolean `tabbable` that is true for editable math fields and for static math fields configured with `{tabbable: true}`. The textarea is permanently mounted to the page, so it should have `tabindex=-1` if `tabbable` is false.
+
+## tabbable
+
+For static and editable math fields, when `tabbable` is false, the math field is not part of the page's tab order. Despite that, the math field can still be focused when selected by a mouse.
+
+Static math fields default to `tabbable: false`, Editable math fields default to `tabbable:true`.
 
 # Handlers
 
 Handlers are called after a specified event. They are called directly on the `handlers` object passed in, preserving the `this` value, so you can do stuff like:
+
 ```js
 class MathList {
   constructor () {
@@ -119,17 +157,22 @@ class MathList {
 ```
 
 It's common to just ignore the last argument, like if the handlers close over the math field:
+
 ```js
 var latex = '';
 var mathField = MQ.MathField($('#mathfield')[0], {
   handlers: {
-    edit: function() { latex = mathField.latex(); },
-    enter: function() { submitLatex(latex); }
+    edit: function () {
+      latex = mathField.latex();
+    },
+    enter: function () {
+      submitLatex(latex);
+    }
   }
 });
 ```
 
-## *OutOf handlers
+## \*OutOf handlers
 
 `.moveOutOf(direction, mathField)`, `.deleteOutOf(direction, mathField)`, `.selectOutOf(direction, mathField)`, `.upOutOf(mathField)`, `.downOutOf(mathField)`
 

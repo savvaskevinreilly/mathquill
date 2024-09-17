@@ -186,6 +186,77 @@ suite('up/down', function () {
     );
   });
 
+  test('up/down into and within binomial', function () {
+    controller.renderLatexMath('\\binom{12}{34}');
+    var binom = rootBlock.ends[L],
+      numer = binom.ends[L],
+      denom = binom.ends[R];
+    assert.equal(binom.latex(), '\\binom{12}{34}', 'binomial is in root block');
+    assert.equal(
+      binom,
+      rootBlock.ends[R],
+      'binomial is sole child of root block'
+    );
+    assert.equal(
+      numer.latex(),
+      '12',
+      'numerator is left end child of binomial'
+    );
+    assert.equal(
+      denom.latex(),
+      '34',
+      'denominator is right end child of binomial'
+    );
+
+    mq.keystroke('Up');
+    assert.equal(cursor.parent, numer, 'cursor up goes into numerator');
+    assert.equal(
+      cursor[R],
+      0,
+      'cursor up from right of binomial inserts at right end of numerator'
+    );
+
+    mq.keystroke('Down');
+    assert.equal(cursor.parent, denom, 'cursor down goes into denominator');
+    assert.equal(
+      cursor[R],
+      0,
+      'cursor down from numerator inserts at right end of denominator'
+    );
+
+    mq.keystroke('Up');
+    assert.equal(cursor.parent, numer, 'cursor up goes into numerator');
+    assert.equal(
+      cursor[R],
+      0,
+      'cursor up from denominator inserts at right end of numerator'
+    );
+
+    mq.keystroke('Left Left Left');
+    assert.equal(cursor.parent, rootBlock, 'cursor outside binomial');
+    assert.equal(cursor[R], binom, 'cursor before binomial');
+
+    mq.keystroke('Up');
+    assert.equal(cursor.parent, numer, 'cursor up goes into numerator');
+    assert.equal(
+      cursor[L],
+      0,
+      'cursor up from left of binomial inserts at left end of numerator'
+    );
+
+    mq.keystroke('Left');
+    assert.equal(cursor.parent, rootBlock, 'cursor outside binomial');
+    assert.equal(cursor[R], binom, 'cursor before binomial');
+
+    mq.keystroke('Down');
+    assert.equal(cursor.parent, denom, 'cursor down goes into denominator');
+    assert.equal(
+      cursor[L],
+      0,
+      'cursor down from left of binomial inserts at left end of denominator'
+    );
+  });
+
   test('nested subscripts and fractions', function () {
     controller.renderLatexMath(
       '\\frac{d}{dx_{\\frac{24}{36}0}}\\sqrt{x}=x^{\\frac{1}{2}}'

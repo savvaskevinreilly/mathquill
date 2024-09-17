@@ -47,14 +47,12 @@ class Controller_mouse extends Controller_latex {
     var ctrlr = root.controller,
       cursor = ctrlr.cursor,
       blink = cursor.blink;
-    var textareaSpan = ctrlr.getTextareaSpanOrThrow();
     var textarea = ctrlr.getTextareaOrThrow();
 
     e.preventDefault(); // doesn't work in IE≤8, but it's a one-line fix:
     (e.target as any).unselectable = true; // http://jsbin.com/yagekiji/1 // TODO - no idea what this unselectable property is
 
     if (cursor.options.ignoreNextMousedown(e)) return;
-    else cursor.options.ignoreNextMousedown = ignoreNextMouseDownNoop;
 
     // some elements should not act like internal mathquill nodes. Tokens for instance define external
     // click / hover behaviors. So we have mathquill act like the item was never clicked. This allows
@@ -92,8 +90,6 @@ class Controller_mouse extends Controller_latex {
       if (ctrlr.editable) {
         cursor.show();
         cursor.controller.aria.queue(cursor.parent).alert();
-      } else {
-        domFrag(textareaSpan).detach();
       }
     }
 
@@ -115,13 +111,10 @@ class Controller_mouse extends Controller_latex {
         cursor.clearSelection();
         updateCursor();
         unbindListeners();
-      },
+      }
     };
 
     if (ctrlr.blurred) {
-      if (rootElement && !ctrlr.editable) {
-        domFrag(rootElement).prepend(domFrag(textareaSpan));
-      }
       textarea.focus();
       // focus call may bubble to clients, who may then write to
       // mathquill, triggering cancelSelectionOnEdit. If that happens, we

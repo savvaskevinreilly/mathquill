@@ -35,8 +35,17 @@ suite('aria', function () {
   test('MathQuillMathField aria-hidden', function () {
     var staticMath = MQ.StaticMath(container);
     staticMath.latex('1+\\sqrt{\\MathQuillMathField{x^2+y^2}}+\\frac{1}{x}');
-    var textArea = $(container).find('textarea');
-    assert.equal(textArea.length, 1, 'One text area for inner editable field');
+    assert.equal(
+      $(container).find('textarea').length,
+      2,
+      'Two text area for inner editable field'
+    );
+    assert.equal(
+      $(container).find('textarea[tabindex=-1]').length,
+      1,
+      'The static math textarea is not tabbable.'
+    );
+    var textArea = $(container).find('textarea:eq(0)');
     assert.equal(
       textArea.closest('[aria-hidden]="true"').length,
       0,
@@ -140,6 +149,41 @@ suite('aria', function () {
     mathField.latex('');
   });
 
+  test('typing and backspacing a binomial', function () {
+    mathField.typedText('1');
+    assertAriaEqual('1');
+    mathField.cmd('\\choose');
+    // Matching behavior of "over", we don't get "choose" as the ARIA here.
+    mathField.typedText('2');
+    assertAriaEqual('2');
+
+    mathField.keystroke('Tab');
+    assertAriaEqual('after StartBinomial, 1 Choose 2 , EndBinomial');
+
+    mathField.keystroke('Backspace');
+    assertAriaEqual('end of lower index 2');
+    mathField.keystroke('Backspace');
+    assertAriaEqual('2');
+    mathField.keystroke('Backspace');
+    assertAriaEqual('Choose');
+    mathField.keystroke('Backspace');
+    assertAriaEqual('1');
+  });
+
+  test('navigating a binomial', function () {
+    mathField.typedText('1');
+    assertAriaEqual('1');
+    mathField.cmd('\\choose');
+    // Matching behavior of "over", we don't get "choose" as the ARIA here.
+    mathField.typedText('2');
+    assertAriaEqual('2');
+    mathField.keystroke('Up');
+    assertAriaEqual('upper index 1');
+    mathField.keystroke('Down');
+    assertAriaEqual('lower index 2');
+    mathField.latex('');
+  });
+
   test('typing and backspacing through parenthesies', function () {
     mathField.typedText('(');
     assertAriaEqual('left parenthesis');
@@ -214,6 +258,25 @@ suite('aria', function () {
     assert.equal(
       'Static Label: 2 plus 2',
       staticMath.__controller.mathspeakSpan.textContent
+    );
+  });
+
+  test('testing aria-label for tokens', function () {
+    var staticMath = MQ.StaticMath(container);
+    staticMath.latex('\\token{123}');
+    assert.equal(
+      'token 123',
+      staticMath.mathspeak().trim(),
+      'default token mathspeak is correct'
+    );
+
+    $('<span aria-label="point 123"></span>').appendTo(
+      $(container).find('.mq-token')[0]
+    );
+    assert.equal(
+      'point 123',
+      staticMath.mathspeak().trim(),
+      "token's child aria-label used for mathspeak"
     );
   });
 });

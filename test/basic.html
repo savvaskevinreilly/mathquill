@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
     <meta charset="UTF-8" />
@@ -46,6 +46,7 @@
         });
       });
       var mq = MQ.MathField($('#basic')[0], {
+        tabbable: false,
         autoSubscriptNumerals: true,
         autoCommands:
           'alpha beta sqrt theta phi pi tau nthroot cbrt prod int ans percent mid square',
@@ -53,8 +54,8 @@
         handlers: {
           edit: function () {
             if (!latex.is(':focus')) latex.val(mq.latex());
-          },
-        },
+          }
+        }
       });
       latex.val(mq.latex());
     </script>

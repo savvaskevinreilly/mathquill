@@ -15,8 +15,8 @@ suite('focusBlur', function () {
           upOutOf: function () {
             wasUpOutOfCalled = true;
             mq2.focus();
-          },
-        },
+          }
+        }
       });
       mq2 = MQ.MathField($('<span></span>').appendTo('#mock')[0]);
       wasUpOutOfCalled = false;
@@ -101,5 +101,46 @@ suite('focusBlur', function () {
       $('#mock').empty();
       done();
     });
+  });
+
+  test('full range selected on focusing tabbable static math', function () {
+    var mq = MQ.StaticMath(
+      $('<span>1234\\times 10^{23}</span>').appendTo('#mock')[0],
+      { tabbable: true }
+    );
+
+    mq.focus();
+
+    assertHasFocus(mq, 'math field');
+    assert.equal(
+      mq.selection().latex,
+      '1234\\times10^{23}',
+      'full textarea selected'
+    );
+
+    assert.equal($(document.activeElement).attr('tabindex'), 0);
+
+    mq.blur();
+    assertHasFocus(mq, 'math field', 'not');
+  });
+
+  test('full range selected on focusing un-tabbable static math', function () {
+    var mq = MQ.StaticMath(
+      $('<span>1234\\times 10^{23}</span>').appendTo('#mock')[0]
+    );
+
+    mq.focus();
+
+    assertHasFocus(mq, 'math field');
+    assert.equal(
+      mq.selection().latex,
+      '1234\\times10^{23}',
+      'full textarea selected'
+    );
+
+    assert.equal($(document.activeElement).attr('tabindex'), '-1');
+
+    mq.blur();
+    assertHasFocus(mq, 'math field', 'not');
   });
 });
